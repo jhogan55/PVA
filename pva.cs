@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
@@ -23,6 +23,7 @@ namespace PVAfront
         int ageClass; //3 age classes currently in play: 0 is infant, 1 is juve, 2 is adult 
         int age; //age in months 
         int infAge; //age of a dependent 
+       
         List<simpleInd> startingPop = new List<simpleInd>(); //keep track of your starting population to reset between trials 
  
        
@@ -50,12 +51,12 @@ namespace PVAfront
                 if (chkDepInf.Checked)
                 {
                     if (Validator.TextEntered(txtInfAge, "Infant Age")
-                         && Validator.IsInt(txtInfAge, "Infant Age")
+                        && Validator.IsInt(txtInfAge, "Infant Age")
                         && Validator.WithinRange(txtInfAge, 0, 11, "Infant Age"))
                     {
                         infAge = Convert.ToInt32(txtInfAge.Text); //how old is dependent infant? 
                         newInd.DepInf = true; //declare infant dependency 
-                        newInd.DepInfDuration = infAge + 6; //add 6 months of pregnancy time to age  
+                        newInd.MonthsSinceBirth = infAge; //add 6 months of pregnancy time to age  
 
                         if (rdoFemale.Checked) //dependent infant is a female, need to add a baby to population
                         {
@@ -71,11 +72,16 @@ namespace PVAfront
                             newInd.DepInf = true;
                             startingPop.Add(newInd); //mom is added with 
                         }
-                    }                  
+                    }
                 }
 
-                else startingPop.Add(newInd); //no dependent infant info added, just add individual to population as is. 
-                RefreshPopulation(startingPop);
+                else //no dependent infant info added, just add individual to population as is. 
+                {
+                    newInd.MonthsSinceBirth = 12; //no dependent, so assume it has been at least a year since ind had an infant 
+                    startingPop.Add(newInd); 
+
+                }
+                RefreshPopulation(startingPop, lstPop, txtStartPop);
                 ResetForm();
             }
            
@@ -85,14 +91,15 @@ namespace PVAfront
         private void btnRun_Click(object sender, EventArgs e)
         {
             //grab years and trials
-            if (Validator.TextEntered(txtYears, "Years") && Validator.TextEntered(txtTrials, "Trials") 
-                && Validator.IsInt(txtYears, "Years") && Validator.TextEntered(txtTrials, "Trials") 
-                && Validator.WithinRange(txtYears,0, 1000, "Years") && Validator.WithinRange(txtTrials, 0, 100000, "Trials"))
+            if (Validator.TextEntered(txtYears, "Years") && Validator.TextEntered(txtTrials, "Trials") && Validator.TextEntered(txtAmr, "AMR Rate")
+                && Validator.IsInt(txtYears, "Years") && Validator.IsInt(txtTrials, "Trials") && Validator.IsDouble(txtAmr, "AMR Rate") 
+                && Validator.WithinRange(txtYears,0, 1000, "Years") && Validator.WithinRange(txtTrials, 0, 100000, "Trials") && Validator.WithinRange(txtAmr, 0, 1, "AMR Rate"))
             {               
                 int years = Convert.ToInt32(txtYears.Text);
                 int trials = Convert.ToInt32(txtTrials.Text);
+                double amrRate = Convert.ToDouble(txtAmr.Text); //rate to use for AMRs
                 int months = years * 12;               
-                RunSim(startingPop, months, trials);
+                RunSim(startingPop, months, trials, amrRate);
                 //countID = 0;
                 ResetForm();
             }
@@ -100,7 +107,7 @@ namespace PVAfront
         }
 
         //function: run sim
-        private void RunSim(List<simpleInd> p, int m, int t)
+        private void RunSim(List<simpleInd> p, int m, int t, double amr)
         {
             List<Trial> trialList = new List<Trial>();
             
@@ -110,8 +117,8 @@ namespace PVAfront
             int smallerPops = 0;
             int neutralPops = 0; 
             
-            //Trial loop: run for the number of trials 
-            for (int i = 0; i < t; i++)
+            
+            for (int i = 0; i < t; i++) //Trial loop: run for the number of trials 
             {              
                 Trial trial = new Trial(); //new trial has started, add monthly results to this 
                 List<simpleInd> trialPop = new List<simpleInd>(p); //population to change within trial
@@ -121,107 +128,111 @@ namespace PVAfront
                 //Risk related variables
                 int riskLength = VitalRates.RISKPERIOD; //counter for AMRs, assumes month 0 of sim was NOT a takeover month so set counter above threshold 
                 bool amrPeriod = false; //start of sim, default is no risk 
+
                 
-                //Time loop: run until you reach the # months 
-                for (int j = 0; j < m; j++)
+                for (int j = 0; j < m; j++) //Month loop: run until you reach the # months 
                 {
                     //Step 1: age everyone up a month and add a month to necessary counters 
                     AgeUp(trialPop); //add a month to everyone's age 
                     trial.MonthOfTrial = j + 1; //this is the month within the trial 
 
-                    //Step 2: Decide if takeover occurred and if you're still under risk period 
-                    bool takeover = calc.CoinFlip(VitalRates.AMRRATE); //weighted coin flip for a new takeover 
+                    //Step 2: Give birth
+                    GiveBirth(trialPop); //turn pregnancies that are long enough into babies
+
+                    //Step 3: Decide if takeover occurred and if you're still under risk period 
+                    bool takeover = calc.CoinFlip(amr); //weighted coin flip for a new takeover 
                     
                     if (takeover) //takeover has occurred 
                     {
                         riskLength = 0; //reset the risk period length to 0
-                        amrPeriod = true; //you are in a risk period 
+                        amrPeriod = true; //you are in a risk period
                     }
 
                     else riskLength++; //no new takeover but youre in a risk period already, so add a month to risk counter
                     if (riskLength >= VitalRates.RISKPERIOD) amrPeriod = false; //if your risk period counter hits the threshold, turn off the risk variable                                           
+
                     Month newMonth = new Month(trialPop.Count(), amrPeriod, takeover); //create a month to keep track of variables 
-                    
-                    //Step 3: flip the weighted coin of death for each ind in your pop
-                    //EVENTUALLY REFACTOR... SEPARATE METHOD AND MOVE TO NEW CLASS? 
-                    for (int k = trialPop.Count -1 ; k >= 0; k--)
+
+                    //Step 4: generate survival rates for each age class based on amrPeriod
+                    double adRate = calc.SampleBeta(vr.ReturnSurvMean(2, amrPeriod), vr.ReturnSurvSd(2, amrPeriod));
+                    double juvRate = calc.SampleBeta(vr.ReturnSurvMean(1, amrPeriod), vr.ReturnSurvSd(1, amrPeriod));
+                    double infRate = calc.SampleBeta(vr.ReturnSurvMean(0, amrPeriod), vr.ReturnSurvSd(0, amrPeriod));
+                    double rate;
+
+                    //Step 5: flip the weighted coin of death for each ind in your pop
+                    for (int k = trialPop.Count -1 ; k >= 0; k--) //loop through pop, can't use foreach because you subtract inds if they die
                     {
-                        double rate = calc.SampleBeta(vr.ReturnSurvMean(trialPop[k].AgeClass, amrPeriod), vr.ReturnSurvSd(trialPop[k].AgeClass, amrPeriod));
+                        if (trialPop[k].AgeClass == 2) { rate = adRate; }
+                        else if (trialPop[k].AgeClass == 1) { rate = juvRate; }
+                        else rate = infRate;
                         bool surv = calc.CoinFlip(rate);
+                        //TEST MESSAGE 
+                        //MessageBox.Show("For ind " + trialPop[k].IndID + " age class " + trialPop[k].AgeClass +
+                        //                ", survival probability = " + rate + ". Survived? " + surv);
+                        int? babyToKill = null;
                         if (surv == false) //individual died
-                        {                            
-                            //if ind is adult female with dependent infants remove baby too
-                            if (trialPop[k].DepInfID > 0) //if mom has a baby associated 
+                        {
+                            //if ind is adult female with dependent infant remove baby too
+                            if (trialPop[k].DepInf & trialPop[k].DepInfFem) 
                             {
-                                int babyToKill = trialPop[k].DepInfID; //just keep this until you escape the loop 
-                                trialPop.RemoveAll(x => x.IndID == babyToKill);
-                                newMonth.Deaths++;
+                                babyToKill = trialPop[k].DepInfID;
                             } //getting baby ID from a dead mom 
 
-                            //if ind is a dependent infant clear blocks from mom 
+                            //if ind is a dependent infant clear record from mom
                             foreach (simpleInd mom in trialPop)
                             {
                                 if (mom.IndID == trialPop[k].MomID)
                                 {
-                                   mom.DepInf = false;
-                                   mom.DepInfID = 0;
-                                   mom.DepInfFem = false;
-                                   mom.DepInfDuration = 0;
+                                    mom.DepInf = false; //no longer has dependent infant 
+                                    mom.DepInfID = 0; //remove infant ID from mom
+                                    mom.DepInfFem = false; //i dont think this matters
+                                    mom.LastInfSurv = false; //puts mom on the accelerated IBI path
                                 } //mom alterations 
 
                             } //search population for the mom in question  
-
-                            trialPop.RemoveAt(k); //remove ind from population 
-                            newMonth.Deaths++;
+                            trialPop.RemoveAt(k); //remove ind from population
+                            if (babyToKill.HasValue)
+                            {
+                                trialPop.RemoveAll(x => x.IndID == babyToKill); //lambda expression "remove all instances in trialPop where the Individ X has ID that the DepInfID"
+                                newMonth.Deaths++;
+                            }
+                           
+                            newMonth.Deaths++; 
                         } //death loop 
                     }
 
-                    //Step 4: flip the death coin for infant males (only to release blocks from moms) 
+                    //Step 6: flip the death coin for infant males (only to release blocks from moms) 
                     foreach (simpleInd maleMoms in trialPop)
                     {
                         if (maleMoms.DepInf & maleMoms.DepInfFem == false)
                         {
-                            double rate = calc.SampleBeta(vr.ReturnSurvMean(0, amrPeriod), vr.ReturnSurvSd(0, amrPeriod));
-                            bool surv = calc.CoinFlip(rate);
+                            bool surv = calc.CoinFlip(infRate);
                             if (!surv) //baby died, clear blocks from mom 
                             {
                                 maleMoms.DepInf = false;
-                                maleMoms.DepInfDuration = 0;
+                                maleMoms.LastInfSurv = false;
+                                maleMoms.DepInfID = 0; 
                             }
                         }
                     }
 
-                    //Step 5: for surviving AFs, flip the baby coin
-                    //EVENTUALLY REFACTOR... SEPARATE METHOD AND MOVE TO NEW CLASS? 
+                    //Step 7: surviving females have a chance to conceive. 
                     for (int l = trialPop.Count -1; l >= 0; l--)
                     {
-                        if (trialPop[l].AgeClass == 2 & trialPop[l].DepInf == false) //if ind is an adult and not already with dependent infant they can try for a baby
+                        if (!trialPop[l].Preg) //monthly conception attempt for individs not pregnant. juve and infant likelihood is 0
                         {
-                            bool newDep = calc.CoinFlip(calc.SampleBeta(vr.ReturnReprodMean(trialPop[l]), vr.ReturnReprodSd(trialPop[l]))); //weighted coin flip for baby or no 
-                            if (newDep) //mom has a new baby this month 
-                            {
+                            trialPop[l].Preg = calc.CoinFlip(vr.ReturnReprodMean(trialPop[l])); //weighted coin flip for baby or no 
+                        }
+                    }
 
-                                trialPop[l].DepInf = true; 
-                                trialPop[l].DepInfFem = calc.CoinFlip(VitalRates.SEXRATIO); //determine sex of baby 
-                                
-                                //It's a girl, so add to population 
-                                if (trialPop[l].DepInfFem)
-                                {
-                                    simpleInd baby = new simpleInd(countID, 0, 0, false, 0, false, 0, trialPop[l].IndID);
-                                    trialPop.Add(baby);
-                                    trialPop[l].DepInfID = baby.IndID;
-                                    countID++;
-                                    newMonth.Births++;
-                                } //female loop
-
-                            } //new baby loop
-                        } //reproduction opportunity 
-                    }//baby attempt loop 
                     newMonth.PopEnd = trialPop.Count();
+                    RefreshPopulation(trialPop, lstCurrentPop, txtCurrentPop);
+                    //TEST MESSAGE 
+                    //MessageBox.Show("End of month. AMR? " + amrPeriod);
                     trial.MonthResults = newMonth;
                                      
-                }//End of single trial
-                //MessageBox.Show("End of trial " + Convert.ToString(i+1) + ". You simulated a starting population of " + p.Count() + " for " +  trial.MonthOfTrial.ToString() + " months, and ended with a population of " + trial.MonthResults.PopEnd.ToString());
+                }//End of single month
+                
                 trialList.Add(trial);
             }//End of all trials
             
@@ -243,31 +254,87 @@ namespace PVAfront
 
         }//Full function 
 
-        private void RefreshPopulation(List<simpleInd> p)
+        private void RefreshPopulation(List<simpleInd> p, ListBox l, TextBox t)
         {
-            lstPop.Items.Clear();
+            l.Items.Clear();
             foreach (simpleInd i in p)
             {
-                lstPop.Items.Add(i);
-                txtStartPop.Text = Convert.ToString(lstPop.Items.Count);
+                l.Items.Add(i);
+                t.Text = Convert.ToString(l.Items.Count);
             }
         }
 
         //Age up each ind after every month, verify age classes, click up the counters 
         private void AgeUp(List<simpleInd> p)
         {
+            foreach (simpleInd ind in p) //loop through the population 
+            {
+                ind.Age++; //Add a month to everyone's age
+                ind.AgeClass = ind.AssignAgeClass(ind.Age); //Check if anyone "graduated" up an age class or not
+                if (!ind.Preg) { ind.MonthsSinceBirth++; } //Anyone who isn't pregnant increase their "time since last baby" by a month 
+                if (ind.Preg) //for pregnant females, add a month to their pregnancy and make sure months since birth remains at 0
+                {
+                    ind.PregDuration++;
+                    ind.MonthsSinceBirth = 0; //make sure "MonthsSinceBirth" remains at 0 for pregnant females 
+                } //pregnancy advances a month.              
+            }
+            DependencyCheck(p); //for any infant that reaches 12 months, remove dependency to mom 
+        }
+
+        //pregnancy has reached the gestation length, turn off pregnancy and create a baby 
+        private void GiveBirth(List<simpleInd> p)
+        {
+            List<int> momsWithFems = new List<int>();
             foreach (simpleInd ind in p)
             {
-                ind.Age++;
-                ind.AgeClass = ind.AssignAgeClass(ind.Age);
-                if (ind.DepInf) { ind.DepInfDuration++; } //if you have a dependent infant add a month to their dependency counter 
-                if (ind.DepInfDuration >= VitalRates.DEPENDENCY) //infant is now independent, break links 
+                if (ind.PregDuration >= VitalRates.GESTATION) //If pregDuration = gestation vital rate, create new baby
                 {
-                    ind.DepInf = false; //mom loses dependency block
-                    ind.DepInfDuration = 0; //infant dependency counter reset
-                    ind.DepInfID = 0; //wipe dependent info data from mom
+                    
+                    ind.Preg = false;
+                    ind.PregDuration = 0; //reset pregnancy counter 
+                    ind.DepInf = true; //turn on dep inf 
+                    ind.DepInfFem = calc.CoinFlip(VitalRates.SEXRATIO); //determine sex of baby 
+                    if (ind.DepInfFem)
+                    {
+                        momsWithFems.Add(ind.IndID); //keep track of which females need a baby linked to them once you escape the foreach
+                    }
                 }
-                if (ind.Age >= VitalRates.JUVEAGE) ind.MomID = 0; //simple way to break the mom dependency from an infant who graduates 
+            }
+            foreach(int momID in momsWithFems) //use the caught momIDs to create new female infants
+            {
+                AddToPop(p, momID); 
+            }
+        }
+
+        //add an individual to the population (right now only infant females) 
+        private void AddToPop(List<simpleInd> p, int momID)
+        {
+            simpleInd baby = new simpleInd(countID, 0, 0, false, 0, false, 0, momID); //create new female, link her to mom
+            foreach (simpleInd ind in p)
+            {
+                if (ind.IndID == momID) { ind.DepInfID = baby.IndID; } 
+            }
+            p.Add(baby); //add baby to pop
+            countID++; //increment counter 
+        }
+
+        private void DependencyCheck(List<simpleInd> p)
+        {
+            foreach (simpleInd ind in p)
+            {
+                if (ind.Age >= 12 & ind.MomID > 0) //if an infant "graduates" to juvenile remove dependency on mom
+                {
+                    foreach (simpleInd i in p)
+                    {
+                        if (i.IndID == ind.MomID)
+                        {
+                            i.DepInfID = 0; //infant no longer dies if mom dies
+                            i.DepInf = false; //mom no longer has a dependent infant 
+                            i.LastInfSurv = true; //Mom is on the "slow/normal" IBI track 
+                        }
+                    }
+                }
+
             }
         }
 
@@ -310,18 +377,18 @@ namespace PVAfront
 
             startingPop.Clear();
 
-            simpleInd sals = new simpleInd(1, 2, 296, true, 0, false, 17, 0); //male dep inf
-            simpleInd chut = new simpleInd(2, 2, 253, false, 0, false, 0, 0);
-            simpleInd oreg = new simpleInd(3, 2, 179, true, 0, false, 16, 0); // male dep inf 
-            simpleInd chch = new simpleInd(4, 2, 190, false, 0, false, 0, 0);
-            simpleInd thym = new simpleInd(5, 2, 147, false, 0, false, 0, 0);
-            simpleInd vani = new simpleInd(6, 2, 123, false, 0, false, 0, 0);
-            simpleInd sage = new simpleInd(7, 2, 121, false, 0, false, 0, 0);
-            simpleInd crys = new simpleInd(8, 2, 93, false, 0, false, 0, 0);
-            simpleInd roux = new simpleInd(9, 1, 72, false, 0, false, 0, 0);
-            simpleInd fres = new simpleInd(10, 1, 72, false, 0, false, 0, 0);
-            simpleInd papr = new simpleInd(11, 1, 37, false, 0, false, 0, 0);
-            simpleInd hari = new simpleInd(12, 1, 19, false, 0, false, 0, 0);
+            simpleInd sals = new simpleInd(1, 2, 296, true, 0, false, 11, 0); //male dep inf
+            simpleInd chut = new simpleInd(2, 2, 253, false, 0, false, 12, 0);
+            simpleInd oreg = new simpleInd(3, 2, 179, true, 0, false, 10, 0); // male dep inf 
+            simpleInd chch = new simpleInd(4, 2, 190, false, 0, false, 12, 0);
+            simpleInd thym = new simpleInd(5, 2, 147, false, 0, false, 12, 0);
+            simpleInd vani = new simpleInd(6, 2, 123, false, 0, false, 12, 0);
+            simpleInd sage = new simpleInd(7, 2, 121, false, 0, false, 12, 0);
+            simpleInd crys = new simpleInd(8, 2, 93, false, 0, false, 12, 0);
+            simpleInd roux = new simpleInd(9, 1, 72, false, 0, false, 12, 0);
+            simpleInd fres = new simpleInd(10, 1, 72, false, 0, false, 12, 0);
+            simpleInd papr = new simpleInd(11, 1, 37, false, 0, false, 12, 0);
+            simpleInd hari = new simpleInd(12, 1, 19, false, 0, false, 12, 0);
 
             startingPop.Add(sals);
             startingPop.Add(chut);
@@ -337,8 +404,26 @@ namespace PVAfront
             startingPop.Add(hari);
 
             countID = 13;
-            RefreshPopulation(startingPop);
+            RefreshPopulation(startingPop, lstPop, txtStartPop);
             btnDefaultStart.Enabled = false; 
+        }
+
+        private void btnEditRates_Click(object sender, EventArgs e)
+        {
+            frmVitalRates vr = new frmVitalRates();
+            vr.Show();
+        }
+
+        private void btnAmrUpdate_Click(object sender, EventArgs e)
+        {
+          
+        }
+
+        private void btnSampleTest_Click(object sender, EventArgs e)
+        {
+            SampleTest st = new SampleTest();
+            st.SampleDistribution();
         }
     }
 }
+

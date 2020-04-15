@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -8,18 +8,19 @@ namespace PVAfront
 {
     public class simpleInd
     {
-        //simple individual: age, age class, sex, dependent infant 
-
         //private variables
         //variables related to individual
         private int ageClass; //0 is inf, 1 is juve, 2 is adult
         private int age; //age in months
         private int indID; //individual ID, just to keep track of things
+        private bool preg = false; //is female pregnant or not 
+        private int pregDuration = 0;//how long female has been pregnant for 
 
         //variables related to mother/offspring dependency
         private bool depInf; //whether ind has an infant or not (used to restrict pregnancy) 
         private bool depInfFem; //keep track of sex of dependent infants. If its female its added to population, if its male its only tracked via mom
-        private int depInfDuration; //keep track of how long reproduction is restricted (18 months total, 6 months preg + 12 months weaning)
+        private bool lastInfSurv; //used to assign reproductive potential for AFs: IBI curve is shorter after infant lost       
+        private int monthsSinceBirth; //keep track of how long dependent infant has been around to determine reproductive potential
         private int momID; //keep track of who mom is (used if mom dies, kill dependent infant too)
         private int depInfID; //keep track of any dependents (release mom from pregnancy blocks if infant dies) 
 
@@ -55,6 +56,32 @@ namespace PVAfront
                 }
             }
         }
+
+
+        public bool Preg
+        {
+            get
+            {
+                return preg;
+            }
+            set
+            {
+                preg = value;
+            }
+        }
+
+        public int PregDuration
+        {
+            get
+            {
+                return pregDuration;
+            }
+            set
+            {
+                pregDuration = value;
+            }
+        }
+
         public bool DepInf
         {
             get
@@ -67,15 +94,15 @@ namespace PVAfront
             }
         }
 
-        public int DepInfDuration
+        public int MonthsSinceBirth
         {
             get
             {
-                return depInfDuration;
+                return monthsSinceBirth;
             }
             set
             {
-                depInfDuration = value;
+                monthsSinceBirth = value;
             }
         }
 
@@ -104,6 +131,18 @@ namespace PVAfront
             set
             {
                 depInfID = value;
+            }
+        }
+
+        public bool LastInfSurv
+        {
+            get
+            {
+                return lastInfSurv;
+            }
+            set
+            {
+                lastInfSurv = value;
             }
         }
 
@@ -137,14 +176,14 @@ namespace PVAfront
         public simpleInd() { }
 
         //New individual added constructor 
-        public simpleInd(int id, int ageClass, int age, bool depInf, int depInfID, bool depInfFem, int depInfDuration, int momID)
+        public simpleInd(int id, int ageClass, int age, bool depInf, int depInfID, bool depInfFem, int monthsSinceBirth, int momID)
         {
             IndID = id;
             AgeClass = ageClass;
             Age = age;
             DepInf = depInf;
             DepInfFem = depInfFem;
-            DepInfDuration = depInfDuration;
+            MonthsSinceBirth = monthsSinceBirth;
             DepInfID = depInfID;
             MomID = momID; 
         }
@@ -161,35 +200,45 @@ namespace PVAfront
         }
 
         //string override for list box display 
-        //TODO: need to  improve and expand this to include age class and dependent infants 
         public override string ToString()
         {
             string display;
             if (ageClass == 0) //infant 
             {
-                display = this.indID + ": infant, " + this.age + " months";
+                display = this.indID + ": infant, " + this.age + " months. Mother ID# " + this.MomID;
             }
             else if (ageClass == 1) //juvenile
             {
                 display = this.indID + ": juvenile, " + this.age + " months";
             }
 
-            else if (depInf)
+            else //this is an adult 
             {
-                if (depInfFem)
+                if (depInf & preg)
                 {
-                    display = this.indID + ": adult, " + this.age + " months. Dependent female infant, ID# " + this.depInfID;
+                    display = this.IndID + ": adult, " + this.age + "months. " + this.pregDuration + " months preg AND has dep inf";
                 }
 
-                else
+                else if (depInf & !preg) //adult has an infant
                 {
-                    display = this.indID + ": adult, " + this.age + " months. Dependent male infant";
+                    if (depInfFem) //infant is female 
+                    {
+                        display = this.indID + ": adult, " + this.age + " months. Dependent female infant, ID# " + this.depInfID;
+                    }
+
+                    else //infant is male
+                    {
+                        display = this.indID + ": adult, " + this.age + " months. Dependent male infant";
+                    }
                 }
 
+                else if (preg & !depInf) //female is pregnant 
+                {
+                    display = this.IndID + ": adult, " + this.age + "months. " + this.pregDuration + " months preg.";
+                }
+
+                else display = this.indID + ": adult, " + this.age + " months. No dependent infant, not pregnant. " + this.monthsSinceBirth + " months since last preg.";
             }
-
-            else display = this.indID + ": adult, " + this.age + " months. No dependent infant";
-
             return display; 
         }
 
